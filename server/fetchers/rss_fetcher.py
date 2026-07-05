@@ -13,6 +13,9 @@ RSS_FEED_URLS = [
     "https://www.coachesvoice.com/feed/",
     "https://spielverlagerung.com/feed/",
     "https://holdingmidfield.com/feed/",
+    "https://thesefootballtimes.co/feed/",
+    "https://feeds.acast.com/public/shows/achtung-radio",
+    "https://www.11v11.com/feed/",
 ]
 
 def fetch_rss_feed(url : str) -> List[RawItem] :
@@ -64,6 +67,6 @@ def fetch_rss_feed(url : str) -> List[RawItem] :
 
 
 if __name__ == "__main__":
-    for url in RSS_FEED_URLS:
+    for url in RSS_FEED_URLS :
         items = fetch_rss_feed(url)
         print(f"{url} -> {len(items)} items")
