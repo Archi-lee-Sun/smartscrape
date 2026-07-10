@@ -11,7 +11,7 @@ def build_similarity_matrix(items: list[RawItem]):
 
     return similarity_matrix
 
-def group_duplicates(items: list[RawItem], threshold: float = 0.87) -> list[list[RawItem]]:
+def group_duplicates(items: list[RawItem], threshold: float = 0.75) -> list[list[RawItem]]:
     n = len(items)
     matrix = build_similarity_matrix(items)
     dsu = DSU(n)

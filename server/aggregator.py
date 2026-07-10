@@ -27,8 +27,6 @@ async def aggregate_all_sources() -> List[RawItem] :
 if __name__ == "__main__":
     items = asyncio.run(aggregate_all_sources())
     print(f"Total items fetched: {len(items)}")
-    
-    telegram_items = [i for i in items if i.source_type == "telegram"]
-    print(f"Telegram items: {len(telegram_items)}")
-    for item in telegram_items[:5]:
-        print(f"[{item.source_type}] {item.source_name}: {item.title}")
+
+    for item in items:
+        print(f"[{item.source_type}] {item.source_name}: {item.title} \n {item.content}")
