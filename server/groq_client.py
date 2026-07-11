@@ -3,6 +3,7 @@ import os
 from groq import Groq
 from .models import RawItem
 from .prompts import SHORT_MODE_PROMPT, STORY_MODE_PROMPT  
+from .routing import  get_mode_for_cluster
 import re
 from pathlib import Path
 from dotenv import load_dotenv
@@ -10,43 +11,10 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).with_name(".env"))
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-SOURCE_MODE = {
-    "BBC Sport": "short",
-    "Transfermarkt": "short",
-    "World History Encyclopedia": "story",
-    "The Football History Podcast": "story",
-    "Holding Midfield": "story",
-    "Spielverlagerung.com": "story",       
-    "American Songwriter": "story",        
-
-    "Far Out Magazine": "story",           
-    "Greek Reporter": "story",             
-    "Coaches' Voice": "story",             
-    "These Football Times": "story",      
-    "Achtung Radio": "story",             
-    "11v11": "story",                     
-
-    "FabrizioRomanoTG": "short",           
-    "FootballHistor": "story",            
-    "ClassicRockNews": "story",            
-    "OasisProtocolFoundation": "short",  
-    "OasisProtocolCommunity": "short",     
-}
-
 MODEL_FOR_MODE = {
     "short": "openai/gpt-oss-20b",
     "story": "openai/gpt-oss-120b",
 }
-
-def get_mode_for_cluster(group: list[RawItem]) -> str:
-    modes = {SOURCE_MODE.get(item.source_name, "story") for item in group}
-    if len(modes) > 1 :
-        raise ValueError(
-            f"Cluster has mixed modes: {modes} — sources: "
-            f"{[item.source_name for item in group]}"
-        )
-    return modes.pop()
-
 
 def format_articles(group: list[RawItem]) -> str:
     xml_output = ""

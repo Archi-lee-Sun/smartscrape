@@ -1,7 +1,8 @@
 import asyncio
 from .aggregator import aggregate_all_sources          
 from .dedup.similarity import group_duplicates    
-from .groq_client import synthesize_cluster, get_mode_for_cluster  
+from .groq_client import synthesize_cluster
+from .routing import get_mode_for_cluster
 
 async def main():
     items = await aggregate_all_sources()
