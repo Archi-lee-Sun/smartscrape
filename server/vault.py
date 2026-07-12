@@ -1,6 +1,7 @@
 import sqlite3
 from contextlib import closing
 from pathlib import Path
+from datetime import datetime
 
 DB_PATH = Path(__file__).parent / "vault.db"
 
@@ -53,19 +54,32 @@ def init_vault() :
                 """)
 
 
-def save_to_vault(item , summary: str , mode: str , cluster_size: int) :
+def save_to_vault(
+    source_type: str,
+    source_name: str,
+    title: str,
+    content: str,
+    url: str,
+    published_at: datetime,
+    fetched_at: datetime,
+    summary: str,
+    mode: str,
+    cluster_size: int,
+) -> None:
     with closing(sqlite3.connect(DB_PATH)) as conn:
         with conn:
-            cursor = conn.cursor()
-
-            cursor.execute("""
+            conn.execute(
+                """
                 INSERT INTO vault_entries (
-                    source_type, source_name, title, content, url, 
+                    source_type, source_name, title, content, url,
                     published_at, fetched_at, summary, mode, cluster_size
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """ , (
-                    item.source_type, item.source_name, item.title, item.content, str(item.url),
-                    item.published_at.isoformat(), item.fetched_at.isoformat(), summary, mode, cluster_size
-                ))
+                """,
+                (
+                    source_type, source_name, title, content, str(url),
+                    published_at.isoformat(), fetched_at.isoformat(),
+                    summary, mode, cluster_size,
+                ),
+            )
 
 
