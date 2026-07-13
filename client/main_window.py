@@ -1,192 +1,809 @@
-"""
-QThread / signal pattern used here:
-
-PyQt applications run their user interface on the main Qt event loop. If slow
-work such as a network request or time.sleep() runs on that same thread, the
-window cannot repaint, buttons cannot respond, and the app appears frozen.
-
-To avoid that, RefreshWorker subclasses QThread and does the simulated slow
-work inside run(). When the work finishes, it emits a Qt signal containing the
-article data. Qt delivers that signal back to MainWindow on the GUI thread,
-where it is safe to update widgets. The worker never touches UI widgets
-directly; it only sends data through signals.
-"""
+"""SmartScrape PyQt6 client: generation hub, live pipeline, and vault."""
 
 from __future__ import annotations
 
-import time
-from dataclasses import dataclass
+import html
+import random
+from typing import Any
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF
 from PyQt6.QtWidgets import (
+    QAbstractButton,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QProgressBar,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-
-@dataclass(frozen=True)
-class Article:
-    title: str
-    source: str
-    snippet: str
+from theme import COLOR, LAYOUT, SPACE, TYPE_SIZE, build_stylesheet, configure_retro_font, make_retro_font
+from workers import ApiWorker, PipelineWorker
 
 
-SAMPLE_ARTICLES = [
-    Article(
-        title="Madrid Edges Rivals in Late Football Thriller",
-        source="Football Desk",
-        snippet="A stoppage-time winner capped a tense match defined by quick transitions and disciplined defending.",
-    ),
-    Article(
-        title="Young Midfielder Turns Training Buzz Into Matchday Impact",
-        source="Pitch Notes",
-        snippet="Coaches praised the player's composure after a breakout performance against a compact back line.",
-    ),
-    Article(
-        title="New Archive Reveals Trade Routes of the Ancient Mediterranean",
-        source="History Ledger",
-        snippet="Freshly cataloged records point to a wider network of ports, merchants, and diplomatic ties.",
-    ),
-    Article(
-        title="How a Medieval Siege Changed City Planning",
-        source="Past & Present",
-        snippet="Historians trace later fortification designs to lessons learned during one unusually long campaign.",
-    ),
-    Article(
-        title="Classic Rock Producer Revisits a Landmark Studio Session",
-        source="Vinyl Weekly",
-        snippet="The engineer recalls analog tape experiments that helped define a decade of guitar-heavy records.",
-    ),
-    Article(
-        title="Lost Live Recording Adds Spark to a Beloved Rock Era",
-        source="Backbeat Journal",
-        snippet="A restored concert tape captures a band stretching familiar songs into louder, looser arrangements.",
-    ),
-]
+class GalaxyWidget(QWidget):
+    """Procedural, resolution-independent retro star field."""
+
+    def paintEvent(self, event: Any) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        gradient = QLinearGradient(0, 0, self.width(), self.height())
+        gradient.setColorAt(0.0, QColor(COLOR["space_800"]))
+        gradient.setColorAt(0.55, QColor(COLOR["space_900"]))
+        gradient.setColorAt(1.0, QColor(COLOR["space_950"]))
+        painter.fillRect(self.rect(), gradient)
+
+        rng = random.Random(2001)
+        star_colors = [QColor(COLOR["star"]), QColor(COLOR["yellow"]), QColor(COLOR["cyan"])]
+        for _ in range(max(70, (self.width() * self.height()) // 9000)):
+            x = rng.randrange(max(1, self.width()))
+            y = rng.randrange(max(1, self.height()))
+            size = rng.choice((1, 1, 1, 2, 2, 3))
+            color = rng.choice(star_colors)
+            color.setAlpha(rng.randrange(100, 235))
+            painter.fillRect(x, y, size, size, color)
+            if size == 3:
+                painter.fillRect(x - 2, y + 1, 7, 1, color)
+                painter.fillRect(x + 1, y - 2, 1, 7, color)
 
 
-class RefreshWorker(QThread):
-    articles_ready = pyqtSignal(list)
+def _draw_retro_text(
+    painter: QPainter,
+    rect: QRectF,
+    text: str,
+    pixel_size: int,
+    offset: QPointF = QPointF(),
+    glow_boost: int = 0,
+) -> None:
+    """Paint shared arcade-marquee text with bloom, outline, and extrusion."""
 
-    def run(self) -> None:
-        time.sleep(2)
-        self.articles_ready.emit(SAMPLE_ARTICLES)
+    font = make_retro_font(pixel_size, weight=QFont.Weight.Black)
+    path = QPainterPath()
+    path.addText(0, 0, font, text)
+    bounds = path.boundingRect()
+    path.translate(
+        rect.center().x() - bounds.center().x() + offset.x(),
+        rect.center().y() - bounds.center().y() + offset.y(),
+    )
+
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    for width, alpha in ((18, 28 + glow_boost), (12, 48 + glow_boost), (7, 86 + glow_boost)):
+        glow = QColor(COLOR["yellow_glow"])
+        glow.setAlpha(min(150, alpha))
+        painter.setPen(QPen(glow, width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.drawPath(path)
+
+    painter.setPen(Qt.PenStyle.NoPen)
+    for depth in range(8, 1, -1):
+        layer = QPainterPath(path)
+        layer.translate(depth, depth)
+        painter.setBrush(QColor(COLOR["yellow_shadow"] if depth > 4 else COLOR["gold"]))
+        painter.drawPath(layer)
+
+    painter.setBrush(QColor(COLOR["yellow_light"]))
+    painter.setPen(QPen(QColor(COLOR["ink"]), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.drawPath(path)
+    highlight = QPainterPath(path)
+    highlight.translate(-1, -1)
+    shine = QColor(COLOR["star"])
+    shine.setAlpha(190)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.setPen(QPen(shine, 1.25))
+    painter.drawPath(highlight)
+    painter.restore()
+
+
+class RetroGlowLabel(QWidget):
+    """Reusable title primitive shared by the Generation Hub and Vault."""
+
+    def __init__(self, text: str, pixel_size: int) -> None:
+        super().__init__()
+        self.text = text
+        self.pixel_size = pixel_size
+        self.setAccessibleName(text)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+
+    def sizeHint(self) -> QSize:
+        metrics = QFontMetrics(make_retro_font(self.pixel_size, QFont.Weight.Black))
+        return QSize(metrics.horizontalAdvance(self.text) + 44, self.pixel_size + 46)
+
+    def setText(self, text: str) -> None:
+        self.text = text
+        self.setAccessibleName(text)
+        self.updateGeometry()
+        self.update()
+
+    def paintEvent(self, event: Any) -> None:
+        painter = QPainter(self)
+        _draw_retro_text(painter, QRectF(self.rect()).adjusted(12, 8, -12, -18), self.text, self.pixel_size)
+
+
+class RetroGenerateButton(QPushButton):
+    """Large custom-painted arcade control with a luminous raised label."""
+
+    def __init__(self) -> None:
+        super().__init__("Generate()")
+        self.setObjectName("generateButton")
+        self.setFixedSize(390, 116)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def paintEvent(self, event: Any) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(7, 7, -10, -12)
+        pressed = self.isDown()
+        if pressed:
+            rect.translate(3, 4)
+        frame = QColor(COLOR["focus"] if self.hasFocus() else COLOR["yellow"])
+        glow = QColor(COLOR["yellow_glow"])
+        glow.setAlpha(105 if self.underMouse() else 68)
+        painter.setPen(QPen(glow, 10))
+        painter.setBrush(QColor(COLOR["panel_hover"] if self.underMouse() else COLOR["panel_raised"]))
+        painter.drawRoundedRect(rect, 11, 11)
+        painter.setPen(QPen(frame, 3))
+        painter.drawRoundedRect(rect, 9, 9)
+        painter.setPen(QPen(QColor(COLOR["yellow_light"]), 3))
+        painter.drawLine(rect.topLeft() + QPointF(4, 3), rect.topRight() - QPointF(4, -3))
+        painter.drawLine(rect.topLeft() + QPointF(3, 4), rect.bottomLeft() - QPointF(-3, 4))
+        painter.setPen(QPen(QColor(COLOR["yellow_shadow"]), 5))
+        painter.drawLine(rect.bottomLeft() + QPointF(5, -1), rect.bottomRight() - QPointF(5, 1))
+        painter.drawLine(rect.topRight() + QPointF(-1, 5), rect.bottomRight() - QPointF(1, 5))
+        if not self.isEnabled():
+            painter.setOpacity(0.45)
+        _draw_retro_text(
+            painter,
+            rect.adjusted(12, 8, -12, -10),
+            self.text(),
+            TYPE_SIZE["button_hero"],
+            QPointF(2, 3) if pressed else QPointF(),
+            26 if self.underMouse() else 0,
+        )
+
+
+class AudioToggleButton(QAbstractButton):
+    """Accessible session audio toggle rendered as a pixel-arcade control."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setCheckable(True)
+        self.setChecked(False)
+        self.setFixedSize(QSize(54, 54))
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Mute sound effects")
+        self.setAccessibleName("Mute sound effects")
+        self.toggled.connect(self._update_accessible_text)
+
+    def _update_accessible_text(self, muted: bool) -> None:
+        text = "Enable sound effects" if muted else "Mute sound effects"
+        self.setToolTip(text)
+        self.setAccessibleName(text)
+        self.update()
+
+    def paintEvent(self, event: Any) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        border = QColor(COLOR["focus"] if self.hasFocus() else COLOR["yellow"])
+        painter.fillRect(1, 1, 52, 52, QColor(COLOR["yellow_shadow"]))
+        painter.fillRect(1, 1, 48, 48, border)
+        painter.fillRect(4, 4, 44, 44, QColor(COLOR["panel_hover"] if self.underMouse() else COLOR["panel_raised"]))
+        painter.fillRect(7, 7, 38, 3, QColor(COLOR["cyan_shadow"]))
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        shadow = QPolygonF(
+            [QPointF(11, 23), QPointF(18, 23), QPointF(26, 16), QPointF(26, 39), QPointF(18, 32), QPointF(11, 32)]
+        )
+        painter.setBrush(QColor(COLOR["cyan_shadow"]))
+        painter.drawPolygon(shadow)
+        speaker = QPolygonF(
+            [QPointF(10, 21), QPointF(17, 21), QPointF(25, 14), QPointF(25, 37), QPointF(17, 30), QPointF(10, 30)]
+        )
+        painter.setBrush(QColor(COLOR["yellow_light"]))
+        painter.drawPolygon(speaker)
+
+        # Stepped brackets read as sound waves while retaining a pixel-grid silhouette.
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(COLOR["yellow"]), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.SquareCap))
+        for x, top, bottom in ((29, 19, 33), (34, 15, 37), (39, 11, 41)):
+            painter.drawLine(x, top, x + 3, top)
+            painter.drawLine(x + 3, top, x + 3, bottom)
+            painter.drawLine(x, bottom, x + 3, bottom)
+        if self.isChecked():
+            painter.setPen(QPen(QColor(COLOR["yellow_light"]), 6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.SquareCap))
+            painter.drawLine(QPointF(9, 9), QPointF(45, 45))
+            painter.setPen(QPen(QColor(COLOR["red_hover"]), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.SquareCap))
+            painter.drawLine(QPointF(9, 9), QPointF(45, 45))
+
+
+class GenerationOverlay(QFrame):
+    save_requested = pyqtSignal(dict)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("retroPanel")
+        self.clusters: list[dict[str, Any]] = []
+        self.decisions: dict[int, str] = {}
+        self.current_index = -1
+        self.stream_complete = False
+        self.stream_failed = False
+        self.save_in_progress = False
+
+        self.status_label = QLabel("Connecting to the pipeline...")
+        self.status_label.setObjectName("statusText")
+        self.status_label.setWordWrap(True)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)
+        self.progress.setTextVisible(True)
+
+        self.title_label = QLabel("Waiting for the first story cluster...")
+        self.title_label.setObjectName("clusterTitle")
+        self.title_label.setWordWrap(True)
+        self.mode_badge = QLabel("WAITING")
+        self.mode_badge.setObjectName("modeBadge")
+        self.mode_badge.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.summary_label = QLabel("Results will appear here live as the pipeline produces them.")
+        self.summary_label.setWordWrap(True)
+        self.summary_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(SPACE["2"], SPACE["2"], SPACE["2"], SPACE["2"])
+        content_layout.setSpacing(SPACE["3"])
+        content_layout.addWidget(self.title_label)
+        content_layout.addWidget(self.mode_badge, 0, Qt.AlignmentFlag.AlignLeft)
+        content_layout.addWidget(self.summary_label)
+        content_layout.addStretch()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(content)
+        scroll.setMinimumHeight(180)
+
+        self.previous_button = QPushButton("← Previous")
+        self.previous_button.setAccessibleName("Show previous cluster")
+        self.next_button = QPushButton("Next →")
+        self.next_button.setAccessibleName("Show next cluster")
+        self.previous_button.clicked.connect(lambda: self.show_index(self.current_index - 1))
+        self.next_button.clicked.connect(lambda: self.show_index(self.current_index + 1))
+
+        self.counter_label = QLabel("0 of 0")
+        self.counter_label.setObjectName("muted")
+        nav = QHBoxLayout()
+        nav.addWidget(self.previous_button)
+        nav.addStretch()
+        nav.addWidget(self.counter_label)
+        nav.addStretch()
+        nav.addWidget(self.next_button)
+
+        self.save_button = QPushButton("Save")
+        self.save_button.setObjectName("saveButton")
+        self.discard_button = QPushButton("Discard")
+        self.discard_button.setObjectName("discardButton")
+        self.save_button.clicked.connect(self._request_save)
+        self.discard_button.clicked.connect(self._discard)
+        actions = QHBoxLayout()
+        actions.addWidget(self.save_button)
+        actions.addWidget(self.discard_button)
+
+        review_page = QWidget()
+        review_layout = QVBoxLayout(review_page)
+        review_layout.setContentsMargins(SPACE["6"], SPACE["6"], SPACE["6"], SPACE["6"])
+        review_layout.setSpacing(SPACE["4"])
+        review_layout.addWidget(self.status_label)
+        review_layout.addWidget(self.progress)
+        review_layout.addWidget(scroll, 1)
+        review_layout.addLayout(nav)
+        review_layout.addLayout(actions)
+
+        completion_panel = QFrame()
+        completion_panel.setObjectName("completionPanel")
+        self.completion_title = RetroGlowLabel("FINISHED", TYPE_SIZE["section"])
+        self.completion_summary = QLabel()
+        self.completion_summary.setObjectName("completionSummary")
+        self.completion_summary.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.completion_summary.setWordWrap(True)
+        self.finish_button = QPushButton("Return to Generation Hub")
+        self.finish_button.setObjectName("finishButton")
+        self.finish_button.setAccessibleDescription("Close this review and return to the Generation Hub")
+        completion_layout = QVBoxLayout(completion_panel)
+        completion_layout.setContentsMargins(SPACE["10"], SPACE["10"], SPACE["10"], SPACE["10"])
+        completion_layout.setSpacing(SPACE["6"])
+        completion_layout.addStretch()
+        completion_layout.addWidget(self.completion_title, 0, Qt.AlignmentFlag.AlignCenter)
+        completion_layout.addWidget(self.completion_summary)
+        completion_layout.addWidget(self.finish_button, 0, Qt.AlignmentFlag.AlignCenter)
+        completion_layout.addStretch()
+
+        completion_page = QWidget()
+        completion_page_layout = QVBoxLayout(completion_page)
+        completion_page_layout.setContentsMargins(SPACE["6"], SPACE["6"], SPACE["6"], SPACE["6"])
+        completion_page_layout.addWidget(completion_panel)
+
+        self.state_pages = QStackedWidget()
+        self.state_pages.setStyleSheet("QStackedWidget { background: transparent; }")
+        self.state_pages.addWidget(review_page)
+        self.state_pages.addWidget(completion_page)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.state_pages)
+        self._sync_controls()
+
+    def reset(self) -> None:
+        self.clusters.clear()
+        self.decisions.clear()
+        self.current_index = -1
+        self.stream_complete = False
+        self.stream_failed = False
+        self.save_in_progress = False
+        self.state_pages.setCurrentIndex(0)
+        self.status_label.setText("Connecting to the pipeline...")
+        self.progress.setRange(0, 0)
+        self.title_label.setText("Waiting for the first story cluster...")
+        self.mode_badge.setText("WAITING")
+        self.summary_label.setText("Results will appear here live as the pipeline produces them.")
+        self._sync_controls()
+
+    def handle_event(self, event: dict[str, Any]) -> None:
+        event_type = event.get("event_type")
+        processed = int(event.get("processed_count", 0))
+        total = int(event.get("total_expected", 0))
+        if total > 0:
+            self.progress.setRange(0, total)
+            self.progress.setValue(min(processed, total))
+        if event_type == "fetched":
+            self.status_label.setText(f"Fetching articles... {processed} of {total or '?'} processed")
+        elif event_type == "clustered":
+            self.status_label.setText(f"Clustering stories... {processed} of {total or '?'} processed")
+        elif event_type == "cluster_ready" and isinstance(event.get("current_cluster"), dict):
+            self.clusters.append(event["current_cluster"])
+            if self.current_index < 0:
+                self.show_index(0)
+            else:
+                self.status_label.setText(f"A new cluster arrived — {len(self.clusters)} available.")
+                self._sync_controls()
+        elif event_type == "completed":
+            self.stream_complete = True
+            self.progress.setRange(0, 1)
+            self.progress.setValue(1)
+            self.status_label.setText("Generation complete. Review each cluster to finish.")
+            self._sync_controls()
+
+    def show_index(self, index: int) -> None:
+        if not 0 <= index < len(self.clusters):
+            return
+        self.current_index = index
+        cluster = self.clusters[index]
+        self.title_label.setText(str(cluster.get("title", "Untitled cluster")))
+        self.mode_badge.setText(str(cluster.get("mode", "short")).upper())
+        self.summary_label.setText(str(cluster.get("summary", "No summary available.")))
+        self._sync_controls()
+
+    def save_succeeded(self) -> None:
+        self.save_in_progress = False
+        if self.current_index >= 0:
+            self.decisions[self.current_index] = "saved"
+            self.status_label.setText("Saved to the Vault.")
+        self._advance_after_decision()
+
+    def save_failed(self, message: str) -> None:
+        self.save_in_progress = False
+        self.status_label.setText(f"Could not save this cluster: {message}")
+        self._sync_controls()
+
+    def show_pipeline_error(self, message: str) -> None:
+        self.progress.setRange(0, 1)
+        self.progress.setValue(0)
+        self.status_label.setText(f"Pipeline connection failed: {message}")
+        # Treat the interrupted stream as closed so the reviewed items (or an
+        # empty run) can be finished and the user is never trapped here.
+        self.stream_complete = True
+        self.stream_failed = True
+        self._sync_controls()
+
+    def _request_save(self) -> None:
+        if self.current_index < 0 or self.save_in_progress:
+            return
+        self.save_in_progress = True
+        self.status_label.setText("Saving to the Vault...")
+        self._sync_controls()
+        self.save_requested.emit(self.clusters[self.current_index])
+
+    def _discard(self) -> None:
+        if self.current_index < 0:
+            return
+        self.decisions[self.current_index] = "discarded"
+        self.status_label.setText("Cluster discarded.")
+        self._advance_after_decision()
+
+    def _advance_after_decision(self) -> None:
+        for index in range(self.current_index + 1, len(self.clusters)):
+            if index not in self.decisions:
+                self.show_index(index)
+                return
+        self._sync_controls()
+
+    def _sync_controls(self) -> None:
+        count = len(self.clusters)
+        has_cluster = self.current_index >= 0
+        decided = has_cluster and self.current_index in self.decisions
+        self.counter_label.setText(f"{self.current_index + 1 if has_cluster else 0} of {count}")
+        self.previous_button.setEnabled(has_cluster and self.current_index > 0)
+        self.next_button.setEnabled(has_cluster and self.current_index < count - 1)
+        self.save_button.setEnabled(has_cluster and not decided and not self.save_in_progress)
+        self.discard_button.setEnabled(has_cluster and not decided and not self.save_in_progress)
+        self.save_button.setText("Saving..." if self.save_in_progress else "Saved" if decided and self.decisions.get(self.current_index) == "saved" else "Save")
+        self.discard_button.setText("Discarded" if decided and self.decisions.get(self.current_index) == "discarded" else "Discard")
+        all_decided = len(self.decisions) == count
+        if self.stream_complete and all_decided:
+            saved = sum(decision == "saved" for decision in self.decisions.values())
+            discarded = sum(decision == "discarded" for decision in self.decisions.values())
+            if self.stream_failed:
+                self.completion_title.setText("RUN ENDED")
+                lead = "The connection ended, but every received cluster has been reviewed."
+            else:
+                self.completion_title.setText("FINISHED")
+                lead = "Review complete. Every generated cluster has a decision."
+            self.completion_summary.setText(
+                f"{lead}\n\n{count} reviewed  •  {saved} saved  •  {discarded} discarded"
+            )
+            self.state_pages.setCurrentIndex(1)
+            self.finish_button.setFocus()
+        else:
+            self.state_pages.setCurrentIndex(0)
+
+
+class GenerationPage(GalaxyWidget):
+    generate_requested = pyqtSignal()
+    vault_requested = pyqtSignal()
+    audio_muted_changed = pyqtSignal(bool)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.vault_button = QPushButton("Vault")
+        self.vault_button.setAccessibleName("Open the Vault")
+        self.vault_button.clicked.connect(self.vault_requested)
+        self.audio_toggle = AudioToggleButton()
+        self.audio_toggle.toggled.connect(self.audio_muted_changed)
+        top = QHBoxLayout()
+        top.addWidget(self.vault_button)
+        top.addStretch()
+        top.addWidget(self.audio_toggle)
+
+        title = RetroGlowLabel("SMARTSCRAPE", TYPE_SIZE["hero"])
+
+        self.generate_button = RetroGenerateButton()
+        self.generate_button.setAccessibleDescription("Start generating news clusters")
+        self.generate_button.clicked.connect(self.generate_requested)
+        hero = QWidget()
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hero_layout.setSpacing(SPACE["5"])
+        hero_layout.addWidget(title, 0, Qt.AlignmentFlag.AlignCenter)
+        hero_layout.addWidget(self.generate_button, 0, Qt.AlignmentFlag.AlignCenter)
+
+        self.body = QStackedWidget()
+        self.body.setStyleSheet("QStackedWidget { background: transparent; }")
+        self.body.addWidget(hero)
+        overlay_host = QWidget()
+        overlay_layout = QVBoxLayout(overlay_host)
+        overlay_layout.setContentsMargins(SPACE["10"], SPACE["4"], SPACE["10"], SPACE["6"])
+        self.overlay = GenerationOverlay()
+        self.overlay.setMaximumWidth(LAYOUT["overlay_max"])
+        overlay_layout.addWidget(self.overlay, 1, Qt.AlignmentFlag.AlignHCenter)
+        self.body.addWidget(overlay_host)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(SPACE["5"], SPACE["4"], SPACE["5"], SPACE["4"])
+        layout.addLayout(top)
+        layout.addWidget(self.body, 1)
+
+    def show_overlay(self) -> None:
+        self.overlay.reset()
+        self.body.setCurrentIndex(1)
+        self.generate_button.setEnabled(False)
+
+    def close_overlay(self) -> None:
+        self.body.setCurrentIndex(0)
+        self.generate_button.setEnabled(True)
+        self.generate_button.setFocus()
+
+
+class VaultListRow(QFrame):
+    """Readable Vault result with metadata anchored to the lower-right."""
+
+    def __init__(self, title: str, created_at: str) -> None:
+        super().__init__()
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setMinimumHeight(LAYOUT["list_row_height"])
+        title_label = QLabel(title)
+        title_label.setObjectName("vaultRowTitle")
+        title_label.setWordWrap(True)
+        date_label = QLabel(created_at)
+        date_label.setObjectName("vaultRowDate")
+        date_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(SPACE["4"], SPACE["3"], SPACE["4"], SPACE["3"])
+        layout.setSpacing(SPACE["2"])
+        layout.addWidget(title_label)
+        layout.addWidget(date_label, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+
+
+class VaultPage(GalaxyWidget):
+    home_requested = pyqtSignal()
+    search_requested = pyqtSignal(str)
+    detail_requested = pyqtSignal(int)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.back_home_button = QPushButton("← Generation Hub")
+        self.back_home_button.clicked.connect(self.home_requested)
+        self.header_title = RetroGlowLabel("THE VAULT", TYPE_SIZE["section"])
+        header = QGridLayout()
+        header.addWidget(self.back_home_button, 0, 0, Qt.AlignmentFlag.AlignLeft)
+        header.addWidget(self.header_title, 0, 0, Qt.AlignmentFlag.AlignCenter)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search saved stories...")
+        self.search_input.setAccessibleName("Search the Vault")
+        self.search_button = QPushButton("Search")
+        self.search_input.returnPressed.connect(self._submit_search)
+        self.search_button.clicked.connect(self._submit_search)
+        search_row = QHBoxLayout()
+        search_row.addWidget(self.search_input, 1)
+        search_row.addWidget(self.search_button)
+
+        self.results_status = QLabel("Loading saved stories...")
+        self.results_status.setObjectName("statusText")
+        self.results = QListWidget()
+        self.results.setAccessibleName("Vault search results")
+        self.results.itemClicked.connect(self._open_item)
+        self.results.itemActivated.connect(self._open_item)
+        list_page = QWidget()
+        list_page.setMaximumWidth(LAYOUT["content_max"])
+        list_page.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        list_layout = QVBoxLayout(list_page)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.addLayout(search_row)
+        list_layout.addWidget(self.results_status)
+        list_layout.addWidget(self.results, 1)
+        list_host = QWidget()
+        list_host_layout = QHBoxLayout(list_host)
+        list_host_layout.setContentsMargins(0, 0, 0, 0)
+        list_host_layout.addStretch()
+        list_host_layout.addWidget(list_page, 1)
+        list_host_layout.addStretch()
+
+        self.detail_title = QLabel()
+        self.detail_title.setObjectName("detailTitle")
+        self.detail_title.setWordWrap(True)
+        self.detail_summary = QLabel()
+        self.detail_summary.setObjectName("detailSummary")
+        self.detail_summary.setWordWrap(True)
+        self.detail_summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.detail_url = QLabel()
+        self.detail_url.setWordWrap(True)
+        self.detail_url.setOpenExternalLinks(True)
+        self.detail_url.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        self.detail_error = QLabel()
+        self.detail_error.setObjectName("errorText")
+        self.detail_error.setWordWrap(True)
+        back_results = QPushButton("← Back to results")
+        back_results.clicked.connect(lambda: self.pages.setCurrentIndex(0))
+        detail_content = QWidget()
+        detail_layout = QVBoxLayout(detail_content)
+        detail_layout.setSpacing(SPACE["4"])
+        detail_layout.addWidget(back_results, 0, Qt.AlignmentFlag.AlignLeft)
+        detail_layout.addWidget(self.detail_error)
+        detail_layout.addWidget(self.detail_title)
+        detail_layout.addWidget(self.detail_summary)
+        detail_layout.addWidget(self.detail_url)
+        detail_layout.addStretch()
+        detail_scroll = QScrollArea()
+        detail_scroll.setWidgetResizable(True)
+        detail_scroll.setWidget(detail_content)
+        detail_scroll.setMaximumWidth(LAYOUT["content_max"])
+        detail_host = QWidget()
+        detail_host_layout = QHBoxLayout(detail_host)
+        detail_host_layout.setContentsMargins(0, 0, 0, 0)
+        detail_host_layout.addStretch()
+        detail_host_layout.addWidget(detail_scroll, 1)
+        detail_host_layout.addStretch()
+
+        self.pages = QStackedWidget()
+        self.pages.setStyleSheet("QStackedWidget { background: transparent; }")
+        self.pages.addWidget(list_host)
+        self.pages.addWidget(detail_host)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(SPACE["6"], SPACE["5"], SPACE["6"], SPACE["6"])
+        root.setSpacing(SPACE["4"])
+        root.addLayout(header)
+        root.addWidget(self.pages, 1)
+
+    def load_entries(self, entries: object) -> None:
+        self.results.clear()
+        if not isinstance(entries, list) or not entries:
+            self.results_status.setText("No saved stories found.")
+            return
+        self.results_status.setText(f"{len(entries)} saved {'story' if len(entries) == 1 else 'stories'}")
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, entry.get("id"))
+            row = VaultListRow(
+                str(entry.get("title", "Untitled")),
+                str(entry.get("created_at", "Date unavailable")),
+            )
+            item.setSizeHint(QSize(0, max(LAYOUT["list_row_height"], row.sizeHint().height())))
+            self.results.addItem(item)
+            self.results.setItemWidget(item, row)
+
+    def show_results_error(self, message: str) -> None:
+        self.results.clear()
+        self.results_status.setText(f"Could not load the Vault: {message}")
+
+    def show_detail(self, detail: object) -> None:
+        self.pages.setCurrentIndex(1)
+        self.detail_error.clear()
+        if not isinstance(detail, dict):
+            self.detail_title.setText("Story not found")
+            self.detail_summary.setText("This Vault entry no longer exists.")
+            self.detail_url.clear()
+            return
+        self.detail_title.setText(str(detail.get("title", "Untitled")))
+        self.detail_summary.setText(str(detail.get("summary", "No summary available.")))
+        url = str(detail.get("url", ""))
+        safe_url = html.escape(url, quote=True)
+        self.detail_url.setText(f'<a style="color:{COLOR["cyan"]}" href="{safe_url}">{html.escape(url)}</a>' if url else "No source URL available.")
+
+    def show_detail_error(self, message: str) -> None:
+        self.pages.setCurrentIndex(1)
+        self.detail_title.setText("Could not load story")
+        self.detail_summary.clear()
+        self.detail_url.clear()
+        self.detail_error.setText(message)
+
+    def _submit_search(self) -> None:
+        self.results_status.setText("Searching...")
+        self.search_requested.emit(self.search_input.text().strip())
+
+    def _open_item(self, item: QListWidgetItem) -> None:
+        entry_id = item.data(Qt.ItemDataRole.UserRole)
+        if entry_id is not None:
+            self.detail_title.setText("Loading story...")
+            self.detail_summary.clear()
+            self.detail_url.clear()
+            self.pages.setCurrentIndex(1)
+            self.detail_requested.emit(int(entry_id))
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.refresh_worker: RefreshWorker | None = None
+        self.pipeline_worker: PipelineWorker | None = None
+        self.api_workers: set[ApiWorker] = set()
+        self.sound_enabled = True
 
         self.setWindowTitle("SmartScrape")
-        self.resize(760, 520)
+        self.resize(980, 700)
+        self.setMinimumSize(760, 560)
+        configure_retro_font()
+        self.setStyleSheet(build_stylesheet())
 
-        self.article_list = QListWidget()
-        self.article_list.setSpacing(8)
-        self.article_list.setAlternatingRowColors(True)
+        self.generation_page = GenerationPage()
+        self.vault_page = VaultPage()
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self.generation_page)
+        self.pages.addWidget(self.vault_page)
+        self.setCentralWidget(self.pages)
 
-        self.refresh_button = QPushButton("Refresh")
-        self.refresh_button.clicked.connect(self.refresh_articles)
-
-        header_layout = QHBoxLayout()
-        title_label = QLabel("News Feed")
-        title_label.setStyleSheet("font-size: 18px; font-weight: 600;")
-        header_layout.addWidget(title_label)
-        header_layout.addStretch()
-        header_layout.addWidget(self.refresh_button)
-
-        layout = QVBoxLayout()
-        layout.addLayout(header_layout)
-        layout.addWidget(self.article_list)
-
-        central_widget = QWidget()
-        central_widget.setLayout(layout)
-        self.setCentralWidget(central_widget)
-
+        self.generation_page.generate_requested.connect(self.start_generation)
+        self.generation_page.vault_requested.connect(self.open_vault)
+        self.generation_page.audio_muted_changed.connect(self._set_audio_muted)
+        self.generation_page.overlay.save_requested.connect(self.save_cluster)
+        self.generation_page.overlay.finish_button.clicked.connect(self.finish_generation)
+        self.vault_page.home_requested.connect(lambda: self.pages.setCurrentIndex(0))
+        self.vault_page.search_requested.connect(self.search_vault)
+        self.vault_page.detail_requested.connect(self.load_vault_detail)
         self.statusBar().showMessage("Ready")
-        self.setStyleSheet(
-            """
-            QListWidget {
-                border: 1px solid #cfcfcf;
-                background: #ffffff;
-            }
-            QLabel#articleTitle {
-                font-weight: 600;
-            }
-            QLabel#articleSource {
-                color: #555555;
-            }
-            QLabel#articleSnippet {
-                color: #333333;
-            }
-            """
-        )
 
-        self.update_articles(SAMPLE_ARTICLES)
+    def _play_click_sound(self) -> None:
+        """No-op audio hook. Wire client/assets/sounds/click.mp3 here later."""
 
-    def refresh_articles(self) -> None:
-        if self.refresh_worker is not None and self.refresh_worker.isRunning():
+        # Intentionally silent for now: the client has no audio asset or playback
+        # dependency yet. Keeping this method makes the future integration local.
+        return
+
+    def _set_audio_muted(self, muted: bool) -> None:
+        self.sound_enabled = not muted
+        self.statusBar().showMessage("Sound effects muted" if muted else "Sound effects enabled", 2500)
+
+    def start_generation(self) -> None:
+        if self.pipeline_worker is not None and self.pipeline_worker.isRunning():
             return
+        if self.sound_enabled:
+            self._play_click_sound()
+        self.generation_page.show_overlay()
+        self.statusBar().showMessage("Generating...")
+        worker = PipelineWorker()
+        self.pipeline_worker = worker
+        worker.event_received.connect(self.generation_page.overlay.handle_event)
+        worker.failed.connect(self.generation_page.overlay.show_pipeline_error)
+        worker.finished.connect(self._pipeline_thread_finished)
+        worker.start()
 
-        self.statusBar().showMessage("Refreshing...")
-        self.refresh_button.setEnabled(False)
+    def _pipeline_thread_finished(self) -> None:
+        worker = self.pipeline_worker
+        self.pipeline_worker = None
+        if worker is not None:
+            worker.deleteLater()
 
-        self.refresh_worker = RefreshWorker()
-        self.refresh_worker.articles_ready.connect(self.handle_articles_ready)
-        self.refresh_worker.finished.connect(self.refresh_worker.deleteLater)
-        self.refresh_worker.finished.connect(self.handle_refresh_finished)
-        self.refresh_worker.start()
+    def finish_generation(self) -> None:
+        self.generation_page.close_overlay()
+        self.statusBar().showMessage("Generation review complete", 3000)
 
-    def handle_articles_ready(self, articles: list[Article]) -> None:
-        self.update_articles(articles)
-        self.statusBar().showMessage("Updated")
-
-    def handle_refresh_finished(self) -> None:
-        self.refresh_button.setEnabled(True)
-        self.refresh_worker = None
-
-    def update_articles(self, articles: list[Article]) -> None:
-        self.article_list.clear()
-
-        for article in articles:
-            item = QListWidgetItem()
-            widget = self.create_article_widget(article)
-            item.setSizeHint(widget.sizeHint())
-            self.article_list.addItem(item)
-            self.article_list.setItemWidget(item, widget)
-
-    def create_article_widget(self, article: Article) -> QWidget:
-        title = QLabel(article.title)
-        title.setObjectName("articleTitle")
-        title.setWordWrap(True)
-
-        source = QLabel(article.source)
-        source.setObjectName("articleSource")
-
-        snippet = QLabel(article.snippet)
-        snippet.setObjectName("articleSnippet")
-        snippet.setWordWrap(True)
-
-        layout = QVBoxLayout()
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(4)
-        layout.addWidget(title)
-        layout.addWidget(source)
-        layout.addWidget(snippet)
-
-        article_widget = QFrame()
-        article_widget.setFrameShape(QFrame.Shape.NoFrame)
-        article_widget.setLayout(layout)
-        article_widget.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Minimum,
+    def save_cluster(self, cluster: dict[str, Any]) -> None:
+        self._start_api_worker(
+            ApiWorker("save", cluster),
+            lambda _data: self.generation_page.overlay.save_succeeded(),
+            lambda message: self.generation_page.overlay.save_failed(message),
         )
-        return article_widget
+
+    def open_vault(self) -> None:
+        self.pages.setCurrentIndex(1)
+        self.vault_page.pages.setCurrentIndex(0)
+        self.vault_page.results_status.setText("Loading saved stories...")
+        self.search_vault("")
+
+    def search_vault(self, query: str) -> None:
+        operation = "search" if query else "entries"
+        self._start_api_worker(
+            ApiWorker(operation, query),
+            self.vault_page.load_entries,
+            self.vault_page.show_results_error,
+        )
+
+    def load_vault_detail(self, entry_id: int) -> None:
+        self._start_api_worker(
+            ApiWorker("detail", entry_id),
+            self.vault_page.show_detail,
+            self.vault_page.show_detail_error,
+        )
+
+    def _start_api_worker(self, worker: ApiWorker, on_success: Any, on_failure: Any) -> None:
+        self.api_workers.add(worker)
+
+        def handle_success(_operation: str, data: object) -> None:
+            on_success(data)
+
+        def handle_failure(_operation: str, message: str) -> None:
+            on_failure(message)
+
+        def cleanup() -> None:
+            self.api_workers.discard(worker)
+            worker.deleteLater()
+
+        worker.succeeded.connect(handle_success)
+        worker.failed.connect(handle_failure)
+        worker.finished.connect(cleanup)
+        worker.start()
+
+    def closeEvent(self, event: Any) -> None:
+        # Let short-lived REST calls finish before Qt destroys their QThread wrappers.
+        for worker in list(self.api_workers):
+            worker.requestInterruption()
+            worker.wait(1000)
+        if self.pipeline_worker is not None and self.pipeline_worker.isRunning():
+            self.pipeline_worker.stop()
+            self.pipeline_worker.wait(2000)
+        event.accept()

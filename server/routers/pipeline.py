@@ -18,7 +18,8 @@ async def run_pipeline_stream() :
     )
 
     groups = group_duplicates(items , threshold = 0.82)
-
+    groups = groups[:25]
+    
     yield PipelineProgressEvent(
         event_type = "clustered" ,
         processed_count = 0 ,
