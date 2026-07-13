@@ -1,5 +1,5 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-
+import asyncio
 from ..schemas import PipelineProgressEvent, SynthesizedCluster
 from ..aggregator import aggregate_all_sources
 from ..dedup.similarity import group_duplicates, select_representative_items
@@ -30,7 +30,7 @@ async def run_pipeline_stream() :
     for index , group in enumerate(groups , start = 1) :
         try :
             mode = get_mode_for_cluster(group)
-            summary = synthesize_cluster(group)
+            summary = await asyncio.to_thread(synthesize_cluster, group)
             
             if summary is None :
                 print(f"WARNING: synthesis failed for cluster {index}; skipping.")

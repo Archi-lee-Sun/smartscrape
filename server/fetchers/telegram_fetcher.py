@@ -3,10 +3,11 @@ from datetime import datetime, timezone
 from typing import List
 from ..models import RawItem
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 import asyncio
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 TELEGRAM_CHANNEL_USERNAMES = [
     "FabrizioRomanoTG",

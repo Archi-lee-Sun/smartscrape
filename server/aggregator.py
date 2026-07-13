@@ -9,7 +9,7 @@ async def aggregate_all_sources() -> List[RawItem] :
 
     for url in RSS_FEED_URLS :
         try :
-            items = fetch_rss_feed(url)
+            items = await asyncio.to_thread(fetch_rss_feed, url)
             all_items.extend(items)
         except Exception as e :
             print(f"Error fetching RSS_feed for url : {url} . Error: {e}")
