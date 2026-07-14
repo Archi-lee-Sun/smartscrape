@@ -20,15 +20,14 @@ def format_articles(group: list[RawItem]) -> str:
     xml_output = ""
     for index , item in enumerate(group , start = 1) :
         clean_title = html.unescape(item.title)
-        clean_content = html.unescape(item.content)
-        
         clean_title = re.sub(r'<[^>]+>' , '' , clean_title)
-        clean_content = re.sub(r'<[^>]+>' , '' , clean_content)
+        safe_title = html.escape(clean_title, quote=False)
+        safe_content = html.escape(item.content, quote=False)
 
         article_xml = (
             f'<article n="{index}">\n'
-            f'  <title>{clean_title}</title>\n'
-            f'  <content>{clean_content}</content>\n'
+            f'  <title>{safe_title}</title>\n'
+            f'  <content>{safe_content}</content>\n'
             f'</article>\n\n'
         )
 

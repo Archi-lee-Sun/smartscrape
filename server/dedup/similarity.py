@@ -5,7 +5,7 @@ from .dsu import DSU
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 def build_similarity_matrix(items: list[RawItem]):
-    texts = [item.title + "\n" + item.content for item in items]
+    texts = [item.title + "\n" + item.content[:200] for item in items]
     embeddings = model.encode(texts, convert_to_tensor=True)
     similarity_matrix = util.cos_sim(embeddings, embeddings)
 

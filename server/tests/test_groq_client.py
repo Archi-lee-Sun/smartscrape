@@ -22,26 +22,26 @@ def raw_item(
     )
 
 
-def test_format_articles_unescapes_html_strips_tags_and_wraps_articles():
+def test_format_articles_escapes_plain_text_inside_xml_boundaries():
     group = [
         raw_item(
             title="<b>Chelsea &amp; Sporting</b>",
-            content="<p>Quenda signs &amp; joins the squad.</p>",
+            content="Quenda signs & joins <the> squad.",
         ),
         raw_item(
-            title="History &amp; archives",
-            content="<div>Late Period &amp; Third Intermediate Period.</div>",
+            title="History > archives",
+            content="Closing tag </content> stays text.",
         ),
     ]
 
     assert format_articles(group) == (
         '<article n="1">\n'
-        "  <title>Chelsea & Sporting</title>\n"
-        "  <content>Quenda signs & joins the squad.</content>\n"
+        "  <title>Chelsea &amp; Sporting</title>\n"
+        "  <content>Quenda signs &amp; joins &lt;the&gt; squad.</content>\n"
         "</article>\n\n"
         '<article n="2">\n'
-        "  <title>History & archives</title>\n"
-        "  <content>Late Period & Third Intermediate Period.</content>\n"
+        "  <title>History &gt; archives</title>\n"
+        "  <content>Closing tag &lt;/content&gt; stays text.</content>\n"
         "</article>"
     )
 

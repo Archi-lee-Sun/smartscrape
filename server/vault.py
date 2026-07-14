@@ -83,3 +83,11 @@ def save_to_vault(
             )
 
 
+def delete_entry(entry_id: int) -> bool:
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        with conn:
+            cursor = conn.execute(
+                "DELETE FROM vault_entries WHERE id = ?",
+                (entry_id,),
+            )
+            return cursor.rowcount > 0

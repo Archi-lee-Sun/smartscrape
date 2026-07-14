@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..vault import save_to_vault
+from ..vault import save_to_vault , delete_entry
 from ..vault_queries import search_vault, get_all_entries, get_full_entry
 from ..schemas import SynthesizedCluster
 
@@ -61,3 +61,10 @@ async def get_entry(entry_id : int) -> VaultEntryFull :
     if row is None:
         raise HTTPException(status_code=404, detail="Entry not found")
     return VaultEntryFull(**dict(row))
+
+@router.delete("/vault/entries/{entry_id}")
+async def delete_entry_route(entry_id: int) -> dict:
+    deleted = delete_entry(entry_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return {"status": "deleted"}

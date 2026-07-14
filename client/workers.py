@@ -24,6 +24,7 @@ class PipelineWorker(QThread):
     def __init__(self) -> None:
         super().__init__()
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._task: asyncio.Task[None] | None = None
         self._websocket: Any = None
         self._stopping = False
 
@@ -31,7 +32,12 @@ class PipelineWorker(QThread):
         try:
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
-            self._loop.run_until_complete(self._receive_events())
+            if self._stopping:
+                return
+            self._task = self._loop.create_task(self._receive_events())
+            self._loop.run_until_complete(self._task)
+        except asyncio.CancelledError:
+            pass
         except Exception as exc:  # Network failures must become safe UI state.
             if not self._stopping:
                 self.failed.emit(str(exc))
@@ -39,6 +45,7 @@ class PipelineWorker(QThread):
             if self._loop is not None:
                 self._loop.close()
             self._loop = None
+            self._task = None
             self._websocket = None
             self.stream_closed.emit()
 
@@ -59,8 +66,8 @@ class PipelineWorker(QThread):
         """Close the socket from the GUI thread without blocking that thread."""
 
         self._stopping = True
-        if self._loop is not None and self._websocket is not None:
-            asyncio.run_coroutine_threadsafe(self._websocket.close(), self._loop)
+        if self._loop is not None and self._task is not None:
+            self._loop.call_soon_threadsafe(self._task.cancel)
 
 
 class ApiWorker(QThread):
@@ -95,4 +102,6 @@ class ApiWorker(QThread):
             return client.get("/vault/search", params={"q": str(self.payload)})
         if self.operation == "detail":
             return client.get(f"/vault/entries/{int(self.payload)}")
+        if self.operation == "delete":
+            return client.delete(f"/vault/entries/{int(self.payload)}")
         raise ValueError(f"Unsupported API operation: {self.operation}")

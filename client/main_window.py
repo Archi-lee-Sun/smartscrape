@@ -10,6 +10,7 @@ from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF
 from PyQt6.QtWidgets import (
     QAbstractButton,
+    QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -17,6 +18,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QLayout,
     QMainWindow,
     QProgressBar,
     QPushButton,
@@ -27,7 +29,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from theme import COLOR, LAYOUT, SPACE, TYPE_SIZE, build_stylesheet, configure_retro_font, make_retro_font
+from theme import COLOR, EXTRUSION, LAYOUT, SPACE, TYPE_SIZE, build_stylesheet, configure_retro_font, make_retro_font
+from music import BackgroundMusicController
 from workers import ApiWorker, PipelineWorker
 
 
@@ -64,6 +67,8 @@ def _draw_retro_text(
     pixel_size: int,
     offset: QPointF = QPointF(),
     glow_boost: int = 0,
+    dark_outline: bool = True,
+    core_color: str = "yellow_light",
 ) -> None:
     """Paint shared arcade-marquee text with bloom, outline, and extrusion."""
 
@@ -86,32 +91,48 @@ def _draw_retro_text(
         painter.drawPath(path)
 
     painter.setPen(Qt.PenStyle.NoPen)
-    for depth in range(8, 1, -1):
+    maximum_depth = 12
+    for depth in range(maximum_depth, 0, -1):
         layer = QPainterPath(path)
         layer.translate(depth, depth)
-        painter.setBrush(QColor(COLOR["yellow_shadow"] if depth > 4 else COLOR["gold"]))
+        shade_index = round((depth - 1) / (maximum_depth - 1) * (len(EXTRUSION) - 1))
+        painter.setBrush(QColor(EXTRUSION[shade_index]))
         painter.drawPath(layer)
 
-    painter.setBrush(QColor(COLOR["yellow_light"]))
-    painter.setPen(QPen(QColor(COLOR["ink"]), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.setBrush(QColor(COLOR[core_color]))
+    if dark_outline:
+        painter.setPen(
+            QPen(
+                QColor(COLOR["ink"]),
+                3,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin,
+            )
+        )
+    else:
+        painter.setPen(Qt.PenStyle.NoPen)
     painter.drawPath(path)
-    highlight = QPainterPath(path)
-    highlight.translate(-1, -1)
-    shine = QColor(COLOR["star"])
-    shine.setAlpha(190)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.setPen(QPen(shine, 1.25))
-    painter.drawPath(highlight)
+    if dark_outline:
+        highlight = QPainterPath(path)
+        highlight.translate(-1, -1)
+        shine = QColor(COLOR["star"])
+        shine.setAlpha(190)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(shine, 1.25))
+        painter.drawPath(highlight)
     painter.restore()
 
 
 class RetroGlowLabel(QWidget):
     """Reusable title primitive shared by the Generation Hub and Vault."""
 
-    def __init__(self, text: str, pixel_size: int) -> None:
+    def __init__(self, text: str, pixel_size: int, *, dark_outline: bool = True, core_color: str = "yellow_light") -> None:
         super().__init__()
         self.text = text
         self.pixel_size = pixel_size
+        self.dark_outline = dark_outline
+        self.core_color = core_color
         self.setAccessibleName(text)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
@@ -127,49 +148,24 @@ class RetroGlowLabel(QWidget):
 
     def paintEvent(self, event: Any) -> None:
         painter = QPainter(self)
-        _draw_retro_text(painter, QRectF(self.rect()).adjusted(12, 8, -12, -18), self.text, self.pixel_size)
+        _draw_retro_text(
+            painter,
+            QRectF(self.rect()).adjusted(12, 8, -12, -18),
+            self.text,
+            self.pixel_size,
+            dark_outline=self.dark_outline,
+            core_color=self.core_color,
+        )
 
 
 class RetroGenerateButton(QPushButton):
-    """Large custom-painted arcade control with a luminous raised label."""
+    """Large solid-yellow Generate control using the shared QSS bevel."""
 
     def __init__(self) -> None:
         super().__init__("Generate()")
         self.setObjectName("generateButton")
         self.setFixedSize(390, 116)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-    def paintEvent(self, event: Any) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = QRectF(self.rect()).adjusted(7, 7, -10, -12)
-        pressed = self.isDown()
-        if pressed:
-            rect.translate(3, 4)
-        frame = QColor(COLOR["focus"] if self.hasFocus() else COLOR["yellow"])
-        glow = QColor(COLOR["yellow_glow"])
-        glow.setAlpha(105 if self.underMouse() else 68)
-        painter.setPen(QPen(glow, 10))
-        painter.setBrush(QColor(COLOR["panel_hover"] if self.underMouse() else COLOR["panel_raised"]))
-        painter.drawRoundedRect(rect, 11, 11)
-        painter.setPen(QPen(frame, 3))
-        painter.drawRoundedRect(rect, 9, 9)
-        painter.setPen(QPen(QColor(COLOR["yellow_light"]), 3))
-        painter.drawLine(rect.topLeft() + QPointF(4, 3), rect.topRight() - QPointF(4, -3))
-        painter.drawLine(rect.topLeft() + QPointF(3, 4), rect.bottomLeft() - QPointF(-3, 4))
-        painter.setPen(QPen(QColor(COLOR["yellow_shadow"]), 5))
-        painter.drawLine(rect.bottomLeft() + QPointF(5, -1), rect.bottomRight() - QPointF(5, 1))
-        painter.drawLine(rect.topRight() + QPointF(-1, 5), rect.bottomRight() - QPointF(1, 5))
-        if not self.isEnabled():
-            painter.setOpacity(0.45)
-        _draw_retro_text(
-            painter,
-            rect.adjusted(12, 8, -12, -10),
-            self.text(),
-            TYPE_SIZE["button_hero"],
-            QPointF(2, 3) if pressed else QPointF(),
-            26 if self.underMouse() else 0,
-        )
 
 
 class AudioToggleButton(QAbstractButton):
@@ -181,12 +177,12 @@ class AudioToggleButton(QAbstractButton):
         self.setChecked(False)
         self.setFixedSize(QSize(54, 54))
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("Mute sound effects")
-        self.setAccessibleName("Mute sound effects")
+        self.setToolTip("Mute app audio")
+        self.setAccessibleName("Mute app audio")
         self.toggled.connect(self._update_accessible_text)
 
     def _update_accessible_text(self, muted: bool) -> None:
-        text = "Enable sound effects" if muted else "Mute sound effects"
+        text = "Enable app audio" if muted else "Mute app audio"
         self.setToolTip(text)
         self.setAccessibleName(text)
         self.update()
@@ -228,6 +224,7 @@ class AudioToggleButton(QAbstractButton):
 
 class GenerationOverlay(QFrame):
     save_requested = pyqtSignal(dict)
+    cancel_requested = pyqtSignal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -257,6 +254,7 @@ class GenerationOverlay(QFrame):
         self.summary_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         content = QWidget()
+        content.setObjectName("clusterContent")
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(SPACE["2"], SPACE["2"], SPACE["2"], SPACE["2"])
         content_layout.setSpacing(SPACE["3"])
@@ -265,6 +263,7 @@ class GenerationOverlay(QFrame):
         content_layout.addWidget(self.summary_label)
         content_layout.addStretch()
         scroll = QScrollArea()
+        scroll.setObjectName("clusterScroll")
         scroll.setWidgetResizable(True)
         scroll.setWidget(content)
         scroll.setMinimumHeight(180)
@@ -333,8 +332,21 @@ class GenerationOverlay(QFrame):
         self.state_pages.setStyleSheet("QStackedWidget { background: transparent; }")
         self.state_pages.addWidget(review_page)
         self.state_pages.addWidget(completion_page)
+
+        self.cancel_button = QPushButton("X")
+        self.cancel_button.setObjectName("overlayCloseButton")
+        self.cancel_button.setAccessibleName("Cancel generation")
+        self.cancel_button.setToolTip("Cancel generation and return to the Generation Hub")
+        self.cancel_button.clicked.connect(self.cancel_requested)
+        close_row = QHBoxLayout()
+        close_row.setContentsMargins(0, 0, 0, 0)
+        close_row.addStretch()
+        close_row.addWidget(self.cancel_button)
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(SPACE["3"], SPACE["3"], SPACE["3"], SPACE["3"])
+        layout.setSpacing(0)
+        layout.addLayout(close_row)
         layout.addWidget(self.state_pages)
         self._sync_controls()
 
@@ -479,7 +491,12 @@ class GenerationPage(GalaxyWidget):
         top.addStretch()
         top.addWidget(self.audio_toggle)
 
-        title = RetroGlowLabel("SMARTSCRAPE", TYPE_SIZE["hero"])
+        self.hero_title = RetroGlowLabel(
+            "SMARTSCRAPE",
+            TYPE_SIZE["hero"],
+            dark_outline=False,
+            core_color="yellow",
+        )
 
         self.generate_button = RetroGenerateButton()
         self.generate_button.setAccessibleDescription("Start generating news clusters")
@@ -487,8 +504,8 @@ class GenerationPage(GalaxyWidget):
         hero = QWidget()
         hero_layout = QVBoxLayout(hero)
         hero_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hero_layout.setSpacing(SPACE["5"])
-        hero_layout.addWidget(title, 0, Qt.AlignmentFlag.AlignCenter)
+        hero_layout.setSpacing(SPACE["8"])
+        hero_layout.addWidget(self.hero_title, 0, Qt.AlignmentFlag.AlignCenter)
         hero_layout.addWidget(self.generate_button, 0, Qt.AlignmentFlag.AlignCenter)
 
         self.body = QStackedWidget()
@@ -496,9 +513,10 @@ class GenerationPage(GalaxyWidget):
         self.body.addWidget(hero)
         overlay_host = QWidget()
         overlay_layout = QVBoxLayout(overlay_host)
-        overlay_layout.setContentsMargins(SPACE["10"], SPACE["4"], SPACE["10"], SPACE["6"])
+        overlay_layout.setContentsMargins(0, SPACE["4"], 0, SPACE["6"])
         self.overlay = GenerationOverlay()
-        self.overlay.setMaximumWidth(LAYOUT["overlay_max"])
+        self.overlay.setFixedWidth(LAYOUT["overlay_max"])
+        self.overlay.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         overlay_layout.addWidget(self.overlay, 1, Qt.AlignmentFlag.AlignHCenter)
         self.body.addWidget(overlay_host)
 
@@ -506,6 +524,13 @@ class GenerationPage(GalaxyWidget):
         layout.setContentsMargins(SPACE["5"], SPACE["4"], SPACE["5"], SPACE["4"])
         layout.addLayout(top)
         layout.addWidget(self.body, 1)
+
+    def resizeEvent(self, event: Any) -> None:
+        """Keep the review frame aligned with the Vault detail width."""
+
+        available_width = max(520, self.width() - (SPACE["5"] * 2))
+        self.overlay.setFixedWidth(min(LAYOUT["overlay_max"], available_width))
+        super().resizeEvent(event)
 
     def show_overlay(self) -> None:
         self.overlay.reset()
@@ -518,36 +543,161 @@ class GenerationPage(GalaxyWidget):
         self.generate_button.setFocus()
 
 
-class VaultListRow(QFrame):
-    """Readable Vault result with metadata anchored to the lower-right."""
+class TrashButton(QAbstractButton):
+    """Small custom-painted trash icon without font or emoji dependencies."""
 
-    def __init__(self, title: str, created_at: str) -> None:
+    def __init__(self, title: str) -> None:
         super().__init__()
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.entry_title = title
+        self.setObjectName("trashButton")
+        self.setFixedSize(30, 30)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(f"Delete {title}")
+        self.setAccessibleName(f"Delete {title}")
+
+    def set_deleting(self, deleting: bool) -> None:
+        self.setEnabled(not deleting)
+        self.setToolTip("Deleting..." if deleting else f"Delete {self.entry_title}")
+
+    def paintEvent(self, event: Any) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        role = "disabled" if not self.isEnabled() else "error" if self.underMouse() else "cyan"
+        color = QColor(COLOR[role])
+        painter.setPen(QPen(color, 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.SquareCap))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawLine(8, 9, 22, 9)
+        painter.drawLine(12, 6, 18, 6)
+        painter.drawRect(10, 11, 10, 12)
+        painter.drawLine(13, 14, 13, 20)
+        painter.drawLine(17, 14, 17, 20)
+
+
+class WarningIcon(QWidget):
+    """Compact painted warning mark for the delete confirmation."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFixedSize(48, 48)
+        self.setAccessibleName("Warning")
+
+    def paintEvent(self, event: Any) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        triangle = QPolygonF([QPointF(24, 4), QPointF(45, 42), QPointF(3, 42)])
+        painter.setPen(QPen(QColor(COLOR["yellow_light"]), 2))
+        painter.setBrush(QColor(COLOR["yellow_shadow"]))
+        painter.drawPolygon(triangle)
+        painter.setPen(QPen(QColor(COLOR["ink"]), 4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(QPointF(24, 16), QPointF(24, 29))
+        painter.drawPoint(QPointF(24, 35))
+
+
+class DeleteConfirmationDialog(QDialog):
+    """Balanced, content-sized destructive confirmation dialog."""
+
+    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("deleteConfirmation")
+        self.setWindowTitle("Delete saved story")
+        self.setModal(True)
+
+        prompt = QLabel("Are you sure you want to delete this?")
+        prompt.setObjectName("deletePrompt")
+        story_title = QLabel(title)
+        story_title.setObjectName("deleteStoryTitle")
+        story_title.setWordWrap(True)
+        story_title.setMaximumWidth(340)
+
+        copy = QVBoxLayout()
+        copy.setContentsMargins(0, 0, 0, 0)
+        copy.setSpacing(SPACE["2"])
+        copy.addWidget(prompt)
+        copy.addWidget(story_title)
+
+        content = QHBoxLayout()
+        content.setContentsMargins(0, 0, 0, 0)
+        content.setSpacing(SPACE["4"])
+        content.addWidget(WarningIcon(), 0, Qt.AlignmentFlag.AlignVCenter)
+        content.addLayout(copy)
+
+        self.delete_button = QPushButton("Delete story")
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setDefault(True)
+        self.delete_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        buttons.addWidget(self.cancel_button)
+        buttons.addWidget(self.delete_button)
+
+        layout = QVBoxLayout(self)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+        layout.setContentsMargins(SPACE["6"], SPACE["6"], SPACE["6"], SPACE["6"])
+        layout.setSpacing(SPACE["5"])
+        layout.addLayout(content)
+        layout.addLayout(buttons)
+
+
+class VaultListRow(QFrame):
+    """Vault result with distinct row-open and delete interactions."""
+
+    open_requested = pyqtSignal(int)
+    delete_requested = pyqtSignal(int)
+
+    def __init__(self, entry_id: int, title: str, created_at: str) -> None:
+        super().__init__()
+        self.entry_id = entry_id
         self.setMinimumHeight(LAYOUT["list_row_height"])
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
         title_label = QLabel(title)
         title_label.setObjectName("vaultRowTitle")
         title_label.setWordWrap(True)
+        title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         date_label = QLabel(created_at)
         date_label.setObjectName("vaultRowDate")
         date_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
-        layout = QVBoxLayout(self)
+        date_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+        self.delete_button = TrashButton(title)
+        self.delete_button.clicked.connect(lambda: self.delete_requested.emit(self.entry_id))
+        metadata = QVBoxLayout()
+        metadata.setContentsMargins(0, 0, 0, 0)
+        metadata.setSpacing(SPACE["1"])
+        metadata.addWidget(self.delete_button, 0, Qt.AlignmentFlag.AlignRight)
+        metadata.addWidget(date_label, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+
+        layout = QHBoxLayout(self)
         layout.setContentsMargins(SPACE["4"], SPACE["3"], SPACE["4"], SPACE["3"])
-        layout.setSpacing(SPACE["2"])
-        layout.addWidget(title_label)
-        layout.addWidget(date_label, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+        layout.setSpacing(SPACE["4"])
+        layout.addWidget(title_label, 1)
+        layout.addLayout(metadata)
+
+    def mouseReleaseEvent(self, event: Any) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.open_requested.emit(self.entry_id)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
 
 class VaultPage(GalaxyWidget):
     home_requested = pyqtSignal()
     search_requested = pyqtSignal(str)
     detail_requested = pyqtSignal(int)
+    delete_requested = pyqtSignal(int)
 
     def __init__(self) -> None:
         super().__init__()
         self.back_home_button = QPushButton("← Generation Hub")
         self.back_home_button.clicked.connect(self.home_requested)
-        self.header_title = RetroGlowLabel("THE VAULT", TYPE_SIZE["section"])
+        self.header_title = RetroGlowLabel(
+            "THE VAULT",
+            TYPE_SIZE["vault_title"],
+            dark_outline=False,
+            core_color="yellow",
+        )
         header = QGridLayout()
         header.addWidget(self.back_home_button, 0, 0, Qt.AlignmentFlag.AlignLeft)
         header.addWidget(self.header_title, 0, 0, Qt.AlignmentFlag.AlignCenter)
@@ -591,6 +741,7 @@ class VaultPage(GalaxyWidget):
         self.detail_summary.setWordWrap(True)
         self.detail_summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.detail_url = QLabel()
+        self.detail_url.setObjectName("detailUrl")
         self.detail_url.setWordWrap(True)
         self.detail_url.setOpenExternalLinks(True)
         self.detail_url.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
@@ -600,8 +751,10 @@ class VaultPage(GalaxyWidget):
         back_results = QPushButton("← Back to results")
         back_results.clicked.connect(lambda: self.pages.setCurrentIndex(0))
         detail_content = QWidget()
+        detail_content.setObjectName("detailContent")
         detail_layout = QVBoxLayout(detail_content)
-        detail_layout.setSpacing(SPACE["4"])
+        detail_layout.setContentsMargins(SPACE["5"], SPACE["5"], SPACE["5"], SPACE["5"])
+        detail_layout.setSpacing(SPACE["5"])
         detail_layout.addWidget(back_results, 0, Qt.AlignmentFlag.AlignLeft)
         detail_layout.addWidget(self.detail_error)
         detail_layout.addWidget(self.detail_title)
@@ -609,6 +762,7 @@ class VaultPage(GalaxyWidget):
         detail_layout.addWidget(self.detail_url)
         detail_layout.addStretch()
         detail_scroll = QScrollArea()
+        detail_scroll.setObjectName("detailScroll")
         detail_scroll.setWidgetResizable(True)
         detail_scroll.setWidget(detail_content)
         detail_scroll.setMaximumWidth(LAYOUT["content_max"])
@@ -638,15 +792,59 @@ class VaultPage(GalaxyWidget):
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
+            entry_id = entry.get("id")
+            if entry_id is None:
+                continue
             item = QListWidgetItem()
-            item.setData(Qt.ItemDataRole.UserRole, entry.get("id"))
+            item.setData(Qt.ItemDataRole.UserRole, int(entry_id))
             row = VaultListRow(
+                int(entry_id),
                 str(entry.get("title", "Untitled")),
                 str(entry.get("created_at", "Date unavailable")),
+            )
+            row.open_requested.connect(self._open_entry_id)
+            row.delete_requested.connect(
+                lambda row_id, title=str(entry.get("title", "this story")): self._confirm_delete(row_id, title)
             )
             item.setSizeHint(QSize(0, max(LAYOUT["list_row_height"], row.sizeHint().height())))
             self.results.addItem(item)
             self.results.setItemWidget(item, row)
+
+    def _confirm_delete(self, entry_id: int, title: str) -> None:
+        dialog = DeleteConfirmationDialog(title, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.set_entry_deleting(entry_id, True)
+            self.delete_requested.emit(entry_id)
+
+    def set_entry_deleting(self, entry_id: int, deleting: bool) -> None:
+        row = self._row_for_entry(entry_id)
+        if row is not None:
+            row.delete_button.set_deleting(deleting)
+
+    def remove_entry(self, entry_id: int) -> None:
+        for index in range(self.results.count()):
+            item = self.results.item(index)
+            if item.data(Qt.ItemDataRole.UserRole) != entry_id:
+                continue
+            row = self.results.itemWidget(item)
+            self.results.takeItem(index)
+            if row is not None:
+                row.deleteLater()
+            break
+        count = self.results.count()
+        self.results_status.setText(
+            "No saved stories found."
+            if count == 0
+            else f"{count} saved {'story' if count == 1 else 'stories'}"
+        )
+
+    def _row_for_entry(self, entry_id: int) -> VaultListRow | None:
+        for index in range(self.results.count()):
+            item = self.results.item(index)
+            if item.data(Qt.ItemDataRole.UserRole) == entry_id:
+                row = self.results.itemWidget(item)
+                return row if isinstance(row, VaultListRow) else None
+        return None
 
     def show_results_error(self, message: str) -> None:
         self.results.clear()
@@ -680,11 +878,14 @@ class VaultPage(GalaxyWidget):
     def _open_item(self, item: QListWidgetItem) -> None:
         entry_id = item.data(Qt.ItemDataRole.UserRole)
         if entry_id is not None:
-            self.detail_title.setText("Loading story...")
-            self.detail_summary.clear()
-            self.detail_url.clear()
-            self.pages.setCurrentIndex(1)
-            self.detail_requested.emit(int(entry_id))
+            self._open_entry_id(int(entry_id))
+
+    def _open_entry_id(self, entry_id: int) -> None:
+        self.detail_title.setText("Loading story...")
+        self.detail_summary.clear()
+        self.detail_url.clear()
+        self.pages.setCurrentIndex(1)
+        self.detail_requested.emit(entry_id)
 
 
 class MainWindow(QMainWindow):
@@ -707,14 +908,19 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.vault_page)
         self.setCentralWidget(self.pages)
 
+        self.background_music = BackgroundMusicController.for_application(self)
+        self.background_music.start(enabled=self.sound_enabled)
+
         self.generation_page.generate_requested.connect(self.start_generation)
         self.generation_page.vault_requested.connect(self.open_vault)
         self.generation_page.audio_muted_changed.connect(self._set_audio_muted)
         self.generation_page.overlay.save_requested.connect(self.save_cluster)
+        self.generation_page.overlay.cancel_requested.connect(self.cancel_generation)
         self.generation_page.overlay.finish_button.clicked.connect(self.finish_generation)
         self.vault_page.home_requested.connect(lambda: self.pages.setCurrentIndex(0))
         self.vault_page.search_requested.connect(self.search_vault)
         self.vault_page.detail_requested.connect(self.load_vault_detail)
+        self.vault_page.delete_requested.connect(self.delete_vault_entry)
         self.statusBar().showMessage("Ready")
 
     def _play_click_sound(self) -> None:
@@ -726,7 +932,8 @@ class MainWindow(QMainWindow):
 
     def _set_audio_muted(self, muted: bool) -> None:
         self.sound_enabled = not muted
-        self.statusBar().showMessage("Sound effects muted" if muted else "Sound effects enabled", 2500)
+        self.background_music.set_enabled(self.sound_enabled)
+        self.statusBar().showMessage("App audio muted" if muted else "App audio enabled", 2500)
 
     def start_generation(self) -> None:
         if self.pipeline_worker is not None and self.pipeline_worker.isRunning():
@@ -751,6 +958,13 @@ class MainWindow(QMainWindow):
     def finish_generation(self) -> None:
         self.generation_page.close_overlay()
         self.statusBar().showMessage("Generation review complete", 3000)
+
+    def cancel_generation(self) -> None:
+        worker = self.pipeline_worker
+        if worker is not None and worker.isRunning():
+            worker.stop()
+        self.generation_page.close_overlay()
+        self.statusBar().showMessage("Generation cancelled", 3000)
 
     def save_cluster(self, cluster: dict[str, Any]) -> None:
         self._start_api_worker(
@@ -780,6 +994,23 @@ class MainWindow(QMainWindow):
             self.vault_page.show_detail_error,
         )
 
+    def delete_vault_entry(self, entry_id: int) -> None:
+        self.vault_page.set_entry_deleting(entry_id, True)
+
+        def handle_success(_data: object) -> None:
+            self.vault_page.remove_entry(entry_id)
+            self.statusBar().showMessage("Saved story deleted", 3500)
+
+        def handle_failure(message: str) -> None:
+            self.vault_page.set_entry_deleting(entry_id, False)
+            self.statusBar().showMessage(f"Could not delete story: {message}", 6000)
+
+        self._start_api_worker(
+            ApiWorker("delete", entry_id),
+            handle_success,
+            handle_failure,
+        )
+
     def _start_api_worker(self, worker: ApiWorker, on_success: Any, on_failure: Any) -> None:
         self.api_workers.add(worker)
 
@@ -799,6 +1030,7 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def closeEvent(self, event: Any) -> None:
+        self.background_music.stop()
         # Let short-lived REST calls finish before Qt destroys their QThread wrappers.
         for worker in list(self.api_workers):
             worker.requestInterruption()
